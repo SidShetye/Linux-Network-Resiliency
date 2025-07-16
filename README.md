@@ -1,109 +1,180 @@
-# Enhanced Network Monitor for Raspberry Pi
+# Network Monitor for Raspberry Pi
 
 ## Overview
 
-The Enhanced Network Monitor (`network_monitor_enhanced.sh`) is an advanced version of the original network monitoring script designed to handle stubborn network failures that require more aggressive recovery mechanisms, including hardware-level resets and system reboots.
+The Network Monitor is a comprehensive network monitoring and recovery system for Raspberry Pi devices. It automatically detects network connectivity issues and performs progressive recovery actions, from simple interface restarts to complete system reboots when necessary.
 
-## Key Improvements
+## Architecture
 
-### 1. Multi-Level Recovery Strategy
-- **Level 1**: Standard interface restart
-- **Level 2**: DHCP renewal with timeout
-- **Level 3**: USB bus reset (for USB WiFi adapters)
-- **Level 4**: Kernel module reload
-- **Level 5**: Enhanced service restarts
-- **Level 6**: System reboot (last resort)
+The system consists of several components working together:
 
-### 2. Failure Tracking
+- **[`network_monitor.sh`](network_monitor.sh)** - Main monitoring script with progressive recovery strategies
+- **[`state_manager.sh`](state_manager.sh)** - Centralized state management library
+- **[`show_errors_since_last_login.sh`](show_errors_since_last_login.sh)** - Error reporting and status display
+- **[`network-monitor.service`](network-monitor.service)** - Systemd service definition
+- **[`network-monitor.timer`](network-monitor.timer)** - Systemd timer for automated execution
+
+## Key Features
+
+### 1. Progressive Recovery Strategy
+The system implements a six-level recovery approach, escalating from least to most aggressive:
+
+1. **Basic Interface Restart** - Simple interface down/up cycle
+2. **DHCP Renewal** - Force new IP lease with timeout
+3. **USB Reset** - Reset USB WiFi adapters (hardware-level)
+4. **Module Reload** - Reload WiFi kernel modules
+5. **WPA Supplicant Restart** - Restart authentication service
+6. **Networking Service Restart** - Full networking stack restart
+
+### 2. Intelligent Failure Tracking
 - Tracks consecutive failures to escalate recovery methods
 - Configurable thresholds for aggressive recovery and system reboot
 - Automatic failure count reset upon successful recovery
+- Persistent state management across reboots
 
-### 3. Enhanced Diagnostics
-- Detailed interface status logging
+### 3. Centralized State Management
+All state is managed through [`state_manager.sh`](state_manager.sh):
+- **State files**: `/home/sid/projects/uptime_monitor/state/`
+- **Log files**: `/home/sid/projects/uptime_monitor/logs/`
+- **Consistent API**: All scripts use the same functions for state management
+
+### 4. Enhanced Diagnostics and Logging
+- Structured logging with consistent format: `TIMESTAMP [LEVEL] MESSAGE`
+- Automatic log rotation and compression (5MB limit)
+- Detailed interface status reporting
 - Multiple DNS server connectivity testing
-- Comprehensive error reporting with emojis for easy log parsing
+- Error tracking and reporting since last login
 
-### 4. Hardware-Level Recovery
+### 5. Hardware-Level Recovery
 - USB bus reset for USB WiFi adapters
-- WiFi kernel module reloading (brcmfmac, brcmutil, cfg80211)
+- WiFi kernel module reloading (`brcmfmac`, `brcmutil`, `cfg80211`)
 - Network interface flushing and reconfiguration
 
 ## Configuration
 
-Edit these variables at the top of the script to customize behavior:
+Edit these variables in [`state_manager.sh`](state_manager.sh) to customize behavior:
 
 ```bash
 MAX_CONSECUTIVE_FAILURES=3    # Failures before aggressive reset
 DHCP_TIMEOUT=30               # DHCP timeout in seconds
-REBOOT_THRESHOLD=5            # Failures before system reboot
+REBOOT_THRESHOLD=3            # Failures before system reboot
+MAX_LOG_SIZE=5242880          # Log rotation size (5MB)
+MAX_LOG_FILES=5               # Maximum old log files to keep
 ```
 
-## Installation
+## Installation and Setup
 
-1. **Backup your current script:**
-   ```bash
-   cp network_monitor.sh network_monitor_original.sh
-   ```
+### 1. Install as Systemd Service (Recommended)
 
-2. **Copy the enhanced script:**
-   ```bash
-   cp network_monitor_enhanced.sh network_monitor.sh
-   ```
+Copy the service files and enable the timer:
 
-3. **Make it executable:**
-   ```bash
-   chmod +x network_monitor.sh
-   ```
+```bash
+# Copy service files to systemd directory
+sudo cp /home/sid/projects/uptime_monitor/network-monitor.timer /etc/systemd/system/
+sudo cp /home/sid/projects/uptime_monitor/network-monitor.service /etc/systemd/system/
 
-4. **Update your crontab (if using cron):**
-   ```bash
-   crontab -e
-   # Add or modify the line:
-   */15 * * * * /home/sid/projects/uptime_monitor/network_monitor.sh
-   ```
+# Reload systemd to recognize the changes
+sudo systemctl daemon-reload
+
+# Stop any existing timer
+sudo systemctl stop network-monitor.timer
+
+# Start and enable the timer
+sudo systemctl start network-monitor.timer
+sudo systemctl enable network-monitor.timer
+```
+
+### 2. Manual Installation (Alternative)
+
+If you prefer cron-based execution:
+
+```bash
+# Make scripts executable
+chmod +x /home/sid/projects/uptime_monitor/network_monitor.sh
+chmod +x /home/sid/projects/uptime_monitor/show_errors_since_last_login.sh
+
+# Add to crontab
+crontab -e
+# Add this line:
+*/15 * * * * /home/sid/projects/uptime_monitor/network_monitor.sh
+```
+
+### 3. Setup Login Error Display
+
+Add to your shell profile (`.bashrc` or `.profile`):
+
+```bash
+# Show network errors since last login
+if [ -f ~/projects/uptime_monitor/show_errors_since_last_login.sh ]; then
+    # Update last login time
+    echo $(date +%s) > ~/projects/uptime_monitor/state/last_login_time
+    
+    # Show errors since last login
+    ~/projects/uptime_monitor/show_errors_since_last_login.sh
+fi
+```
+
+## Verification and Monitoring
+
+### Check Service Status
+
+```bash
+# Check timer status
+sudo systemctl status network-monitor.timer
+
+# List all timers to see when yours will run next
+systemctl list-timers network-monitor.timer
+
+# Check if the service runs immediately
+sudo systemctl status network-monitor.service
+
+# View recent logs
+journalctl -u network-monitor.service -f
+```
+
+### Monitor Network Status
+
+```bash
+# Check current failure count
+cat /home/sid/projects/uptime_monitor/state/network_failures
+
+# View recent network logs
+tail -f /home/sid/projects/uptime_monitor/logs/network_monitor.log
+
+# Show errors since last login
+/home/sid/projects/uptime_monitor/show_errors_since_last_login.sh
+
+# Reset failure count manually if needed
+rm -f /home/sid/projects/uptime_monitor/state/network_failures
+```
 
 ## Recovery Mechanisms Explained
 
-### Standard Recovery (Original Methods)
-- Interface up/down cycling
-- wpa_supplicant service restart
-- networking service restart
+### Standard Recovery (Failures < 3)
+For initial failures, the system tries basic recovery methods:
+- Interface restart
+- DHCP renewal
+- USB bus reset (if applicable)
 
-### Enhanced Recovery (New Methods)
+### Aggressive Recovery (Failures ≥ 3)
+When failures persist, all recovery strategies are attempted:
+- All standard methods
+- Kernel module reload
+- WPA supplicant restart with cleanup
+- Full networking service restart
 
-#### DHCP Renewal
-- Releases current DHCP lease
-- Requests new lease with configurable timeout
-- Handles DHCP server issues and IP conflicts
-
-#### USB Bus Reset
-- Detects USB WiFi adapters automatically
-- Unbinds and rebinds USB device
-- Effective for hardware-level USB issues
-
-#### Kernel Module Reload
-- Unloads WiFi kernel modules
-- Reloads modules in correct order
-- Handles driver-level issues
-
-#### Enhanced Service Restarts
-- Kills stale processes
-- Clears socket files
-- Flushes network configurations
-- Extended wait times for proper initialization
-
-#### System Reboot
-- Last resort after configurable failure threshold
+### System Reboot (Last Resort)
+After reaching the reboot threshold:
 - Creates reboot marker for tracking
 - Graceful shutdown with filesystem sync
+- Automatic recovery confirmation after reboot
 
 ## Failure Scenarios Addressed
 
-### 1. "Interface UP but no IP" (Your Issue)
+### 1. "Interface UP but no IP"
 **Recovery sequence:**
 1. DHCP renewal with timeout
-2. USB bus reset (if applicable)
+2. USB bus reset (if USB WiFi adapter)
 3. Kernel module reload
 4. Enhanced service restarts
 5. System reboot if persistent
@@ -118,41 +189,39 @@ REBOOT_THRESHOLD=5            # Failures before system reboot
 - Network configuration flushing
 - Service restart with cleanup
 
-### 4. Persistent Failures
-- Automatic escalation to system reboot
-- Failure tracking prevents infinite loops
-- Recovery confirmation and reset
+### 4. Authentication Issues
+- WPA supplicant restart with socket cleanup
+- Process cleanup and restart
+- Configuration reload
 
-## Monitoring and Logs
+## File Structure
 
-### Log Enhancements
-- Emoji indicators for quick visual parsing
-- Detailed diagnostic information
-- Failure count tracking
-- Recovery method identification
+```
+projects/uptime_monitor/
+├── network_monitor.sh              # Main monitoring script
+├── state_manager.sh                # Centralized state management
+├── show_errors_since_last_login.sh # Error display script
+├── network-monitor.service         # Systemd service definition
+├── network-monitor.timer           # Systemd timer configuration
+├── state/                          # Centralized state directory
+│   ├── network_failures            # Failure count tracking
+│   ├── last_login_time             # Login time tracking
+│   └── network_reboot_marker       # Reboot marker
+├── logs/                           # Centralized log directory
+│   └── network_monitor.log         # Structured log file
+└── README.md                       # This documentation
+```
 
-### Log Rotation
-- Automatic compression of old logs
-- Configurable retention policy
-- Size-based rotation (5MB default)
-
-### Key Log Indicators
-- ✅ Success indicators
-- ❌ Failure indicators  
-- ⚠️ Warning/recovery indicators
-- 🔄 Process indicators
-- 🚨 Critical alerts
-- 📊 Diagnostic information
-
-## Testing the Enhanced Script
+## Testing
 
 ### Manual Test
 ```bash
 # Run once manually to test
-./network_monitor_enhanced.sh
+cd /home/sid/projects/uptime_monitor
+./network_monitor.sh
 
 # Check the log for new entries
-tail -f network_monitor.log
+tail -f logs/network_monitor.log
 ```
 
 ### Simulate Failure
@@ -161,30 +230,28 @@ tail -f network_monitor.log
 sudo ip link set wlan0 down
 
 # Run the script
-./network_monitor_enhanced.sh
+./network_monitor.sh
 
 # Check if it recovered
 ip addr show wlan0
 ```
 
-### Monitor Failure Count
+### Test Error Display
 ```bash
-# Check current failure count
-cat /tmp/network_failures
-
-# Reset failure count manually if needed
-rm -f /tmp/network_failures
+# Show current network status and errors
+./show_errors_since_last_login.sh
 ```
 
 ## Troubleshooting
 
 ### Script Not Working
-1. Check permissions: `ls -la network_monitor_enhanced.sh`
+1. Check permissions: `ls -la network_monitor.sh`
 2. Verify sudo access: `sudo -l`
-3. Check log file: `tail -20 network_monitor.log`
+3. Check log file: `tail -20 logs/network_monitor.log`
+4. Verify state directory exists: `ls -la state/`
 
 ### Frequent Reboots
-1. Increase `REBOOT_THRESHOLD` value
+1. Increase `REBOOT_THRESHOLD` value in [`state_manager.sh`](state_manager.sh)
 2. Check for hardware issues
 3. Verify WiFi configuration
 4. Monitor system logs: `journalctl -f`
@@ -194,17 +261,35 @@ rm -f /tmp/network_failures
 2. Check device path: `ls -la /sys/class/net/wlan0/device/`
 3. Ensure proper permissions for USB control
 
-## Comparison with Original Script
+### Service Not Starting
+1. Check service status: `sudo systemctl status network-monitor.service`
+2. Verify file paths in service file
+3. Check systemd logs: `journalctl -u network-monitor.service`
 
-| Feature | Original | Enhanced |
-|---------|----------|----------|
-| Recovery Methods | 3 basic | 6+ advanced |
-| Failure Tracking | None | Comprehensive |
-| Hardware Reset | No | Yes (USB/modules) |
-| DHCP Handling | Basic | Advanced with timeout |
-| Diagnostics | Minimal | Detailed |
-| Reboot Capability | No | Yes (configurable) |
-| Log Quality | Basic | Enhanced with emojis |
+## Log Analysis
+
+### Useful Commands
+```bash
+# Count recent failures
+grep "Consecutive failure count" logs/network_monitor.log | tail -10
+
+# Check recovery success rate
+grep -E "\[(SUCCESS|ERROR)\]" logs/network_monitor.log | tail -20
+
+# Monitor reboot frequency
+grep "network reboot" logs/network_monitor.log
+
+# Show all errors since specific date
+awk '/^2024-01-15.*\[ERROR\]/' logs/network_monitor.log
+```
+
+### Log Format
+All log entries follow the structured format:
+```
+YYYY-MM-DD HH:MM:SS [LEVEL] MESSAGE
+```
+
+Levels include: `INFO`, `SUCCESS`, `WARNING`, `ERROR`
 
 ## Security Considerations
 
@@ -212,54 +297,62 @@ rm -f /tmp/network_failures
 - USB device manipulation requires elevated privileges
 - System reboot capability should be used carefully
 - Consider firewall rules for network operations
+- State files are stored in user directory for security
 
 ## Performance Impact
 
 - Minimal CPU usage during normal operation
 - Increased resource usage during recovery operations
 - Longer execution time due to enhanced diagnostics
-- Network interruption during aggressive recovery
+- Brief network interruption during aggressive recovery
+- Automatic log rotation prevents disk space issues
 
 ## Backup and Recovery
 
 ### Before Deployment
 ```bash
-# Backup current configuration
-cp /etc/wpa_supplicant/wpa_supplicant.conf /etc/wpa_supplicant/wpa_supplicant.conf.backup
-cp /etc/dhcpcd.conf /etc/dhcpcd.conf.backup
+# Backup current network configuration
+sudo cp /etc/wpa_supplicant/wpa_supplicant.conf /etc/wpa_supplicant/wpa_supplicant.conf.backup
+sudo cp /etc/dhcpcd.conf /etc/dhcpcd.conf.backup
 ```
 
 ### Emergency Recovery
-If the enhanced script causes issues:
+If the system causes issues:
 ```bash
-# Restore original script
-cp network_monitor_original.sh network_monitor.sh
+# Stop the service
+sudo systemctl stop network-monitor.timer
+sudo systemctl disable network-monitor.timer
 
 # Reset failure tracking
-rm -f /tmp/network_failures /tmp/network_reboot_marker
+rm -f /home/sid/projects/uptime_monitor/state/network_failures
+rm -f /home/sid/projects/uptime_monitor/state/network_reboot_marker
 
 # Restart networking manually
 sudo systemctl restart networking
 ```
 
-## Support and Maintenance
+## Maintenance
 
-### Regular Maintenance
+### Regular Tasks
 - Monitor log file size and rotation
 - Review failure patterns in logs
 - Update thresholds based on experience
 - Test recovery mechanisms periodically
+- Check state directory permissions
 
-### Log Analysis
-```bash
-# Count recent failures
-grep "Consecutive failure count" network_monitor.log | tail -10
+### Updates and Modifications
+When modifying the scripts:
+1. Test changes manually first
+2. Update configuration in [`state_manager.sh`](state_manager.sh)
+3. Restart the service: `sudo systemctl restart network-monitor.timer`
+4. Monitor logs for any issues
 
-# Check recovery success rate
-grep -E "(✅|❌)" network_monitor.log | tail -20
+## Support
 
-# Monitor reboot frequency
-grep "network reboot" network_monitor.log
-```
+For issues or improvements:
+1. Check the logs first: `tail -50 logs/network_monitor.log`
+2. Verify configuration in [`state_manager.sh`](state_manager.sh)
+3. Test individual recovery functions manually
+4. Review system logs: `journalctl -f`
 
-This enhanced script should handle the persistent "interface UP but no IP" failures you experienced by implementing multiple recovery strategies and ultimately rebooting the system when all else fails.
+This network monitoring system provides robust, automated network recovery for Raspberry Pi devices with comprehensive logging and state management.

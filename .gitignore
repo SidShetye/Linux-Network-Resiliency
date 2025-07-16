@@ -1,1 +1,5 @@
 network_monitor.log
+state/last_login_time
+state/network_failures
+state/network_reboot_marker
+logs/network_monitor.log
