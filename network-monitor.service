@@ -1,0 +1,11 @@
+[Unit]
+Description=Network monitoring service for wlan0
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/sid/projects/uptime_monitor/network_monitor.sh
+User=sid
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,12 @@
+[Unit]
+Description=Run network monitoring every 15 minutes
+After=network.target
+
+[Timer]
+OnBootSec=30sec
+OnUnitActiveSec=15min
+OnStartupSec=0
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target
